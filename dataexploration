@@ -1,0 +1,154 @@
+/*
+Covid 19 Data Exploration 
+Skills used: Joins, CTE's, Temp Tables, Windows Functions, Aggregate Functions, Creating Views, Converting Data Types
+Note: It's possible to run the queries into "mode.com" to see the results. 
+All the tables are online accesseble after the free registration. 
+*/
+
+
+
+-- I: Preparation
+-- Using: SELECT, FROM, LIMIT, ORDER BY
+
+-- Getting familiar with the data by showing all columns. 
+SELECT *
+FROM itsnoraexplora.covid_deaths
+LIMIT 100
+
+-- Filter relevant columns
+-- Deciding for a usefull order.
+SELECT location, date, total_cases, new_cases, total_deaths, population
+FROM itsnoraexplora.covid_deaths
+ORDER BY 1,2
+LIMIT 100
+
+/*  Both countries and continents are listed under the "Location" column. Unlike continents,
+the "Continents" column for countries is not empty, so it is possible to filter it with the "WHERE" function. */
+Select Location, date, total_cases, new_cases, total_deaths, population
+From itsnoraexplora.covid_deaths
+Where continent is not null 
+order by 3,4
+
+
+-- II: General insights at country level
+-- USING: ilike, arithmetic operators, aggregate functions, GROUP BY
+
+-- Insight 1: Total Cases vs Population; Shows what percentage of population infected with Covid
+Select Location, date, Population, total_cases,  (total_cases/population)*100 as PercentPopulationInfected
+From itsnoraexplora.covid_deaths
+order by 1,2
+
+-- Insight 2: Total Cases vs Total Deaths; Shows probability of dying if you contract covid for example in Germany
+Select Location, date, total_cases,total_deaths, (total_deaths/total_cases)*100 as DeathPercentage
+From itsnoraexplora.covid_deaths
+Where location ilike '%germany%'
+and continent is not null 
+order by 1,2
+
+-- Insight 3: Countries with Highest Infection Rate compared to Population
+Select Location, Population, MAX(total_cases) as HighestInfectionCount,  Max((total_cases/population))*100 as PercentPopulationInfected
+From itsnoraexplora.covid_deaths
+Where continent is not null 
+Group by Location, Population
+order by PercentPopulationInfected desc
+
+-- Insight 4: Countries with Highest Death Count per Population
+
+Select Location, MAX(total_deaths) as TotalDeathCount
+From itsnoraexplora.covid_deaths
+Where continent is not null 
+Group by Location
+order by TotalDeathCount desc
+
+
+-- II: General insights at continent level
+-- USING: PARTITION BY, CTE, JOINs
+
+-- Insight 1: Showing contintents with the highest death count per population
+Select continent, MAX(Total_deaths) as TotalDeathCount
+From itsnoraexplora.covid_deaths
+Where continent is not null 
+Group by continent
+order by TotalDeathCount desc
+
+
+-- III: General insights at global level
+
+-- Insight 1: Showing all total cases, total deaths and the mortality rate 
+Select SUM(new_cases) as total_cases, SUM(new_deaths) as total_deaths, SUM(new_deaths)/SUM(New_Cases)*100 as DeathPercentage
+From itsnoraexplora.covid_deaths
+--Opt: Where location like '%states%'
+where continent is not null 
+--Opt: Group By date
+order by 1,2
+-- Note for myself: No group although aggregation function. Reason: Global view, so no group nessasary
+
+-- Insight 2: Adding a rolling count, which sums all the vaccinations so far 
+-- Note: First vaccines for Afghanistan starting at row 459
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations, 
+SUM(vac.new_vaccinations) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+--Opt: , (RollingPeopleVaccinated/population)*100
+From itsnoraexplora.covid_deaths dea
+Join itsnoraexplora.covid_vaccinations vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+where dea.continent is not null 
+order by 2,3
+
+-- Insight 3: Adding a vaccine percantage
+-- Using: CTE
+With PopvsVac 
+as
+(
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+, SUM(vac.new_vaccinations) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+--Opt: , (RollingPeopleVaccinated/population)*100
+From itsnoraexplora.covid_deaths dea
+Join itsnoraexplora.covid_vaccinations vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+where dea.continent is not null 
+--Opt: order by 2,3
+)
+Select *, (RollingPeopleVaccinated/Population)*100 as RollingPercantageVaccinated
+From PopvsVac
+
+
+-- IV: Table and views
+-- USING: CREATE TABEL, DROP IF EXISTS, CREATE VIEW
+-- Note: This is not working at mode.com, but is still used to prepare the visualisation in Tableau.
+
+-- Create table
+DROP Table if exists #PercentPopulationVaccinated
+Create Table #PercentPopulationVaccinated
+(
+Continent nvarchar(255),
+Location nvarchar(255),
+Date datetime,
+Population numeric,
+New_vaccinations numeric,
+RollingPeopleVaccinated numeric
+)
+Insert into #PercentPopulationVaccinated
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+, SUM(CONVERT(int,vac.new_vaccinations)) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+--Opt: , (RollingPeopleVaccinated/population)*100
+From itsnoraexplora.covid_deaths dea
+Join itsnoraexplora.covid_vaccinations vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+--Opt: where dea.continent is not null 
+--Opt: order by 2,3
+Select *, (RollingPeopleVaccinated/Population)*100
+From #PercentPopulationVaccinated
+
+-- Create view
+Create View PercentPopulationVaccinated as
+Select dea.continent, dea.location, dea.date, dea.population, vac.new_vaccinations
+, SUM(CONVERT(int,vac.new_vaccinations)) OVER (Partition by dea.Location Order by dea.location, dea.Date) as RollingPeopleVaccinated
+--Opt: , (RollingPeopleVaccinated/population)*100
+From itsnoraexplora.covid_deaths dea
+Join itsnoraexplora.covid_vaccinations vac
+	On dea.location = vac.location
+	and dea.date = vac.date
+where dea.continent is not null 
